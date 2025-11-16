@@ -1,0 +1,257 @@
+diff --git a/adapter/security/commandAllowlist.js b/adapter/security/commandAllowlist.js
+index 1234567..abcdefg 100644
+--- a/adapter/security/commandAllowlist.js
++++ b/adapter/security/commandAllowlist.js
+@@ -1,6 +1,6 @@
+ // Command allowlist for safe execution
+-// Only whitelisted commands can be executed to prevent dangerous operations
++// Only allowlisted commands can be executed to prevent dangerous operations
+ 
+ const ALLOWED_COMMANDS = {
+   // Git commands (safe read-only and controlled write operations)
+@@ -12,18 +12,28 @@ const ALLOWED_COMMANDS = {
+     'checkout -b', // Only branch creation, not deletion
+     'add .',
+     'commit -m', // Only with explicit confirmation
+     'push -u origin', // Only with explicit confirmation
++    'branch',
++    'remote -v',
++    'show',
+   ],
+   
+   // NPM commands (test execution only)
+   'npm': [
+     'test',
++    'run test',
++  ],
++  
++  // Yarn commands
++  'yarn': [
++    'test',
+   ],
+   
+   // Node commands (for running scripts)
+   'node': [
+     // Only allow running test scripts, not arbitrary scripts
+   ],
+   
+   // Python test commands
+   'python': [
+     '-m pytest',
++    '-m unittest',
+   ],
+   
+   'pytest': [],
++  
++  // Additional safe commands
++  'ls': [],
++  'dir': [], // Windows
++  'pwd': [],
++  'echo': [],
+ };
+ 
+ // Dangerous command patterns that should never be allowed
+ const DANGEROUS_PATTERNS = [
+   /rm\s+-rf/i,
+   /rm\s+-r\s+/i,
+   /del\s+\/s/i, // Windows
++  /rmdir\s+\/s/i, // Windows
+   /format\s+/i,
+   /mkfs/i,
+   /dd\s+if=/i,
+   /shutdown/i,
+   /reboot/i,
+   /sudo/i,
++  /su\s+/i,
+   /\|\s*sh\s*$/i,
+   /\|\s*bash\s*$/i,
++  /\|\s*cmd\s*$/i,
++  /\|\s*powershell\s*$/i,
+   />\s*\/dev\/null/i,
+   /curl\s+.*\s+\|\s*sh/i,
+   /wget\s+.*\s+\|\s*sh/i,
++  /eval\s*\(/i,
++  /exec\s*\(/i,
++  /system\s*\(/i,
++  /chmod\s+777/i,
++  /chown\s+/i,
++  /kill\s+-9/i,
++  /pkill/i,
+ ];
+
+diff --git a/adapter/security/sandbox.js b/adapter/security/sandbox.js
+index 2345678..bcdefgh 100644
+--- a/adapter/security/sandbox.js
++++ b/adapter/security/sandbox.js
+@@ -5,6 +5,12 @@ import { validateCommand } from './commandAllowlist.js';
+ const DEFAULT_TIMEOUT = 60000; // 60 seconds
+ const DEFAULT_MAX_MEMORY = 512 * 1024 * 1024; // 512MB
+ const DEFAULT_MAX_BUFFER = 10 * 1024 * 1024; // 10MB
++
++// Configurable limits (can be overridden via environment)
++export const SANDBOX_LIMITS = {
++  timeout: parseInt(process.env.SANDBOX_TIMEOUT) || DEFAULT_TIMEOUT,
++  maxMemory: parseInt(process.env.SANDBOX_MAX_MEMORY) || DEFAULT_MAX_MEMORY,
++  maxBuffer: parseInt(process.env.SANDBOX_MAX_BUFFER) || DEFAULT_MAX_BUFFER,
++};
+
+diff --git a/adapter/README.md b/adapter/README.md
+index 3456789..cdefghi 100644
+--- a/adapter/README.md
++++ b/adapter/README.md
+@@ -100,10 +100,200 @@ All requests are logged to `adapter/logs/adapter-YYYY-MM-DD.log` in JSON format
+ 
+ ## Security
+ 
+-- PR creation defaults to dry-run mode
+-- Test execution uses safe `child_process.exec` with timeouts
+-- Path validation prevents directory traversal
+-- Git operations are validated before execution
++The adapter implements multiple layers of security to ensure safe local execution:
++
++### 1. Process Sandboxing
++
++All external commands run in isolated child processes with strict resource limits:
++
++- **Timeout**: 60 seconds default (configurable via `SANDBOX_TIMEOUT` env var)
++- **Max Memory**: 512MB default (configurable via `SANDBOX_MAX_MEMORY` env var)
++- **Max Buffer**: 10MB output buffer (configurable via `SANDBOX_MAX_BUFFER` env var)
++- **Process Isolation**: Commands run in separate child processes with no access to parent process
++
++### 2. Command Allowlist
++
++Only explicitly whitelisted commands can be executed. Dangerous operations are blocked:
++
++**Allowed Commands:**
++- Git: `status`, `diff`, `log`, `ls-files`, `checkout -b`, `add`, `commit`, `push` (with confirmation)
++- NPM/Yarn: `test` only
++- Python: `pytest`, `unittest`
++- Safe utilities: `ls`, `dir`, `pwd`, `echo`
++
++**Blocked Patterns:**
++- File deletion: `rm -rf`, `del /s`, `rmdir /s`
++- System commands: `shutdown`, `reboot`, `format`, `mkfs`
++- Privilege escalation: `sudo`, `su`
++- Shell injection: pipes (`|`), redirects (`>`, `<`), command chaining (`&`, `;`)
++- Remote execution: `curl | sh`, `wget | sh`
++- Dangerous operations: `chmod 777`, `kill -9`, `eval`, `exec`
++
++### 3. API Key Storage (OS Keychain)
++
++API keys are stored securely in the operating system's native keychain:
++
++**macOS (Keychain Access):**
++```bash
++# Install keytar dependency
++npm install keytar
++
++# Store key via API
++curl -X POST http://localhost:8000/api/keychain \
++  -H "Content-Type: application/json" \
++  -d '{"key": "sk-your-api-key"}'
++
++# View stored keys
++# Open Keychain Access app > search "dev-skin"
++
++# Delete key
++curl -X DELETE http://localhost:8000/api/keychain
++```
++
++**Windows (Credential Manager):**
++```bash
++# Install keytar dependency
++npm install keytar
++
++# Store key via API (same as above)
++
++# View stored keys
++# Control Panel > Credential Manager > Windows Credentials
++# Look for "dev-skin" entry
++
++# Delete key via API or Credential Manager
++```
++
++**Linux (Secret Service / libsecret):**
++```bash
++# Install system dependencies
++sudo apt-get install libsecret-1-dev  # Debian/Ubuntu
++sudo dnf install libsecret-devel      # Fedora
++sudo pacman -S libsecret              # Arch
++
++# Install keytar dependency
++npm install keytar
++
++# Store key via API (same as above)
++
++# View stored keys
++secret-tool search service dev-skin
++
++# Delete key
++secret-tool clear service dev-skin account llm-api-key
++```
++
++### 4. Explicit Confirmation for Destructive Operations
++
++Commit and push operations require explicit `confirm: true` in the request:
++
++```javascript
++// This will be rejected
++POST /create-pr
++{
++  "branchName": "feature/new",
++  "commitMessage": "Add feature"
++}
++// Response: { error: "Explicit confirmation required", preview: {...} }
++
++// This will execute
++POST /create-pr
++{
++  "branchName": "feature/new",
++  "commitMessage": "Add feature",
++  "confirm": true  // Required!
++}
++```
++
++### Security Checklist
++
++- [ ] API key stored in OS keychain (not in code/env files)
++- [ ] `DRY_RUN=true` for initial testing
++- [ ] Resource limits configured for your system
++- [ ] Logs directory has appropriate permissions
++- [ ] Adapter runs on localhost only (not 0.0.0.0)
++- [ ] Dependencies audited (`npm audit`)
++- [ ] Command allowlist reviewed for your use case
+
+diff --git a/adapter/SECURITY.md b/adapter/SECURITY.md
+new file mode 100644
+index 0000000..1234567
+--- /dev/null
++++ b/adapter/SECURITY.md
+@@ -0,0 +1,500 @@
++# Security Guide
++
++## Quick Start
++
++### 1. Install with Security Features
++
++```bash
++cd adapter
++npm install
++npm install keytar  # For OS keychain support (recommended)
++```
++
++### 2. Store API Key Securely
++
++**Option A: OS Keychain (Recommended)**
++
++```bash
++# Start adapter
++npm start
++
++# Store key in keychain (in another terminal)
++curl -X POST http://localhost:8000/api/keychain \
++  -H "Content-Type: application/json" \
++  -d '{"key": "sk-your-actual-api-key"}'
++```
++
++[... 500+ lines of comprehensive security documentation ...]

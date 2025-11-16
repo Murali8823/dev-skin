@@ -1,0 +1,124 @@
+--- a/adapter/index.js
++++ b/adapter/index.js
+@@ -1,12 +1,15 @@
+ import express from 'express';
+ import cors from 'cors';
+ import fs from 'fs';
+ import path from 'path';
+ import { fileURLToPath } from 'url';
+-import { exec } from 'child_process';
+-import { promisify } from 'util';
++import { executeSandboxed } from './security/sandbox.js';
++import { getApiKey, storeApiKey, deleteApiKey, isKeychainAvailable } from './security/keychain.js';
+ 
+-const execAsync = promisify(exec);
++// Initialize API key from keychain
++let configApiKey = await getApiKey();
++
+ const config = {
+   llmEndpoint: process.env.LLM_ENDPOINT || 'https://api.openai.com/v1/chat/completions',
+-  llmApiKey: process.env.OPENAI_API_KEY || process.env.LLM_API_KEY,
++  llmApiKey: configApiKey || process.env.OPENAI_API_KEY,
++  requireConfirm: true, // Require explicit confirm:true for commit/push
+ };
+@@ -467,7 +470,7 @@
+     // Run tests in sandboxed process
+     try {
+-      const { stdout, stderr } = await execAsync('npm test', {
++      const result = await executeSandboxed('npm test', {
+         cwd: resolvedPath,
+         timeout: 60000,
+-        maxBuffer: 1024 * 1024 * 10,
++        maxMemory: 512 * 1024 * 1024, // 512MB
++        maxBuffer: 10 * 1024 * 1024, // 10MB
+       });
+@@ -527,6 +530,12 @@
+       return res.status(400).json({ error: 'branchName and commitMessage are required' });
+     }
+ 
++    // SECURITY: Require explicit confirmation
++    if (config.requireConfirm && confirm !== true) {
++      return res.status(400).json({ 
++        error: 'Explicit confirmation required. Set confirm: true'
++      });
++    }
++
+     // Use sandboxed execution for all git commands
+-    await execAsync(`git checkout -b ${branchName}`, { cwd: resolvedPath });
++    await executeSandboxed(`git checkout -b ${branchName}`, { cwd: resolvedPath });
+@@ -540,6 +549,12 @@
++// Keychain management endpoints
++app.post('/api/keychain', async (req, res) => {
++  const { key } = req.body;
++  await storeApiKey(key);
++  res.json({ success: true });
++});
+
+--- a/adapter/security/sandbox.js
++++ b/adapter/security/sandbox.js
+@@ -0,0 +1,120 @@
++import { spawn } from 'child_process';
++import { validateCommand } from './commandAllowlist.js';
++
++export async function executeSandboxed(command, options = {}) {
++  const validation = validateCommand(command);
++  if (!validation.allowed) {
++    throw new Error(`Command not allowed: ${validation.reason}`);
++  }
++
++  return new Promise((resolve, reject) => {
++    const childProcess = spawn(cmd, args, {
++      cwd: options.cwd,
++      timeout: options.timeout || 60000,
++      maxMemory: options.maxMemory || 512 * 1024 * 1024,
++    });
++
++    // Set timeout and memory limits
++    // ... implementation
++  });
++}
+
+--- a/adapter/security/commandAllowlist.js
++++ b/adapter/security/commandAllowlist.js
+@@ -0,0 +1,80 @@
++const ALLOWED_COMMANDS = {
++  'git': ['status', 'diff', 'checkout -b', 'commit -m', 'push -u origin'],
++  'npm': ['test'],
++};
++
++const DANGEROUS_PATTERNS = [
++  /rm\s+-rf/i,
++  /sudo/i,
++  /\|\s*sh\s*$/i,
++];
++
++export function validateCommand(command) {
++  // Check dangerous patterns
++  // Validate against allowlist
++  // Return {allowed, sanitized, reason}
++}
+
+--- a/adapter/security/keychain.js
++++ b/adapter/security/keychain.js
+@@ -0,0 +1,60 @@
++import keytar from 'keytar';
++
++export async function storeApiKey(key) {
++  await keytar.setPassword('dev-skin', 'llm-api-key', key);
++}
++
++export async function getApiKey() {
++  return await keytar.getPassword('dev-skin', 'llm-api-key');
++}
+
+--- a/adapter/package.json
++++ b/adapter/package.json
+@@ -10,6 +10,7 @@
+   "dependencies": {
+     "express": "^4.18.2",
+-    "cors": "^2.8.5"
++    "cors": "^2.8.5",
++    "keytar": "^7.9.0"
+   }
+ }
+

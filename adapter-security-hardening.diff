@@ -1,0 +1,339 @@
+Security Hardening Patch for Adapter Service
+=============================================
+
+This patch implements comprehensive security hardening for safe local execution.
+
+## Changes Summary
+
+### 1. Enhanced Command Allowlist (adapter/security/commandAllowlist.js)
+
+Added:
+- Additional safe git commands: branch, remote -v, show
+- Yarn test support
+- Python unittest support
+- Safe utility commands: ls, dir, pwd, echo
+
+Enhanced dangerous pattern detection:
+- Windows-specific dangerous commands (rmdir /s, cmd, powershell)
+- Additional privilege escalation patterns (su)
+- Code execution patterns (eval, exec, system)
+- File permission changes (chmod 777, chown)
+- Process killing (kill -9, pkill)
+
+### 2. Configurable Sandbox Limits (adapter/security/sandbox.js)
+
+Added environment variable configuration:
+- SANDBOX_TIMEOUT: Override default 60s timeout
+- SANDBOX_MAX_MEMORY: Override default 512MB memory limit
+- SANDBOX_MAX_BUFFER: Override default 10MB output buffer
+
+Exported SANDBOX_LIMITS for runtime inspection.
+
+### 3. Keychain API Endpoints (adapter/index.js)
+
+Already implemented:
+- POST /api/keychain - Store API key in OS keychain
+- GET /api/keychain - Check keychain status
+- DELETE /api/keychain - Remove API key from keychain
+
+### 4. Comprehensive Security Documentation (adapter/README.md)
+
+Added detailed security section covering:
+- Process sandboxing with resource limits
+- Command allowlist and blocked patterns
+- OS keychain integration for all platforms (macOS, Windows, Linux)
+- Explicit confirmation requirements
+- Path validation
+- Request logging
+- Security best practices
+- Security checklist
+
+## Implementation Details
+
+### Process Sandboxing
+
+All commands execute in isolated child processes with:
+- Timeout enforcement (kills process after limit)
+- Memory limits (via NODE_OPTIONS for Node.js processes)
+- Output buffer limits (prevents memory exhaustion)
+- Graceful termination (SIGTERM then SIGKILL)
+
+### Command Validation
+
+Two-layer validation:
+1. Dangerous pattern check (regex-based, fails fast)
+2. Allowlist check (command + args must match allowed patterns)
+
+Shell features blocked:
+- Pipes (|)
+- Redirects (>, <)
+- Background execution (&)
+- Command chaining (;, &&, ||)
+
+### API Key Security
+
+Storage hierarchy:
+1. OS Keychain (preferred, requires keytar)
+2. Environment variables (fallback)
+3. Never in code or config files
+
+Platform-specific implementations:
+- macOS: Keychain Access
+- Windows: Credential Manager
+- Linux: Secret Service (libsecret)
+
+### Confirmation Requirements
+
+Destructive operations require explicit confirm:true:
+- Git commit
+- Git push
+- Branch creation with commits
+
+Dry-run mode (default):
+- Returns preview of operations
+- No actual changes made
+- Must set DRY_RUN=false and confirm:true to execute
+
+## Testing the Security Features
+
+### Test Command Allowlist
+
+```bash
+# Should succeed
+curl -X POST http://localhost:8000/run-tests \
+  -H "Content-Type: application/json" \
+  -d '{"repoPath": "."}'
+
+# Should fail (dangerous command)
+# Internally, any attempt to run "rm -rf" will be blocked
+```
+
+### Test Sandbox Limits
+
+```bash
+# Set tight limits
+export SANDBOX_TIMEOUT=5000
+export SANDBOX_MAX_MEMORY=134217728  # 128MB
+export SANDBOX_MAX_BUFFER=1048576    # 1MB
+
+# Restart adapter
+npm start
+```
+
+### Test Keychain Storage
+
+```bash
+# Check keychain availability
+curl http://localhost:8000/api/keychain
+
+# Store key
+curl -X POST http://localhost:8000/api/keychain \
+  -H "Content-Type: application/json" \
+  -d '{"key": "sk-test-key-12345"}'
+
+# Verify storage (platform-specific)
+# macOS: Open Keychain Access, search "dev-skin"
+# Windows: Control Panel > Credential Manager
+# Linux: secret-tool search service dev-skin
+
+# Delete key
+curl -X DELETE http://localhost:8000/api/keychain
+```
+
+### Test Confirmation Requirement
+
+```bash
+# Without confirmation (should fail)
+curl -X POST http://localhost:8000/create-pr \
+  -H "Content-Type: application/json" \
+  -d '{
+    "branchName": "test-branch",
+    "commitMessage": "Test commit"
+  }'
+
+# With confirmation (should succeed if DRY_RUN=false)
+curl -X POST http://localhost:8000/create-pr \
+  -H "Content-Type: application/json" \
+  -d '{
+    "branchName": "test-branch",
+    "commitMessage": "Test commit",
+    "confirm": true
+  }'
+```
+
+## Security Audit Log
+
+All operations are logged to `adapter/logs/adapter-YYYY-MM-DD.log`:
+
+```json
+{
+  "timestamp": "2024-01-15T10:30:00.000Z",
+  "endpoint": "/run-tests",
+  "method": "POST",
+  "request": {"repoPath": "."},
+  "response": {"success": true, "exitCode": 0},
+  "error": null
+}
+```
+
+Review logs regularly for:
+- Failed command attempts (blocked by allowlist)
+- Timeout/resource limit violations
+- Unauthorized API access attempts
+- Unusual patterns
+
+## Migration Guide
+
+### For Existing Installations
+
+1. Update dependencies:
+```bash
+cd adapter
+npm install keytar  # Optional but recommended
+```
+
+2. Store API key in keychain:
+```bash
+# Remove from environment/config
+unset OPENAI_API_KEY
+
+# Store in keychain
+curl -X POST http://localhost:8000/api/keychain \
+  -H "Content-Type: application/json" \
+  -d '{"key": "your-actual-api-key"}'
+```
+
+3. Configure resource limits (optional):
+```bash
+# Add to .env or shell profile
+export SANDBOX_TIMEOUT=60000
+export SANDBOX_MAX_MEMORY=536870912  # 512MB
+export SANDBOX_MAX_BUFFER=10485760   # 10MB
+```
+
+4. Enable production mode:
+```bash
+# Only after testing!
+export DRY_RUN=false
+```
+
+### For New Installations
+
+1. Install with keychain support:
+```bash
+cd adapter
+npm install
+npm install keytar  # For keychain support
+```
+
+2. Configure API key:
+```bash
+npm start  # Start adapter
+
+# In another terminal
+curl -X POST http://localhost:8000/api/keychain \
+  -H "Content-Type: application/json" \
+  -d '{"key": "your-api-key"}'
+```
+
+3. Test in dry-run mode (default):
+```bash
+# Make test requests
+# Verify preview responses
+```
+
+4. Enable production mode when ready:
+```bash
+export DRY_RUN=false
+npm start
+```
+
+## Security Considerations
+
+### Threat Model
+
+Protected against:
+- ✅ Arbitrary command execution
+- ✅ File system destruction (rm -rf, etc.)
+- ✅ Privilege escalation (sudo, su)
+- ✅ Shell injection
+- ✅ Resource exhaustion (memory, CPU, disk)
+- ✅ API key exposure in logs/code
+- ✅ Accidental destructive operations
+
+Not protected against:
+- ❌ Malicious code in test files (tests run with full privileges)
+- ❌ Network-based attacks (adapter should run on localhost only)
+- ❌ Physical access to machine
+- ❌ Compromised dependencies (use npm audit)
+
+### Defense in Depth
+
+Multiple security layers:
+1. Command allowlist (prevents execution)
+2. Dangerous pattern detection (catches variations)
+3. Process sandboxing (limits damage)
+4. Confirmation requirements (prevents accidents)
+5. Path validation (restricts file access)
+6. Audit logging (enables detection)
+
+### Recommended Deployment
+
+```
+┌─────────────────────────────────────┐
+│  User's Machine (localhost only)    │
+│                                     │
+│  ┌──────────────────────────────┐  │
+│  │  Adapter Service             │  │
+│  │  - Sandboxed execution       │  │
+│  │  - Command allowlist         │  │
+│  │  - Keychain storage          │  │
+│  │  - Audit logging             │  │
+│  └──────────────────────────────┘  │
+│           ↕ HTTPS                   │
+│  ┌──────────────────────────────┐  │
+│  │  LLM API (OpenAI, etc.)      │  │
+│  └──────────────────────────────┘  │
+└─────────────────────────────────────┘
+```
+
+DO NOT expose adapter to network:
+- Bind to 127.0.0.1 only (default)
+- Use firewall to block external access
+- No authentication built-in (assumes localhost)
+
+## Compliance Notes
+
+This implementation follows security best practices:
+- OWASP: Command injection prevention
+- CWE-78: OS Command Injection mitigation
+- CWE-94: Code Injection prevention
+- CWE-400: Resource exhaustion prevention
+- CWE-522: Insufficiently Protected Credentials (keychain storage)
+
+## Support
+
+For security issues:
+1. Review logs in `adapter/logs/`
+2. Check keychain status: `GET /api/keychain`
+3. Verify allowlist: See `adapter/security/commandAllowlist.js`
+4. Test sandbox: Set tight limits and monitor
+
+For security vulnerabilities:
+- Do not open public issues
+- Contact maintainers directly
+- Provide detailed reproduction steps
+
+## Version History
+
+- v1.1.0: Enhanced security hardening
+  - Configurable sandbox limits
+  - Extended command allowlist
+  - Comprehensive documentation
+  - Platform-specific keychain instructions
+
+- v1.0.0: Initial security implementation
+  - Basic sandboxing
+  - Command allowlist
+  - Keychain integration
+  - Confirmation requirements

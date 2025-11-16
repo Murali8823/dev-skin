@@ -1,0 +1,89 @@
+{
+  "name": "dev-skin-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server for Dev Skin tools",
+  "tools": [
+    {
+      "name": "run-tests",
+      "description": "Run tests in a repository using npm test",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "repoPath": {
+            "type": "string",
+            "description": "Path to the repository root directory"
+          }
+        },
+        "required": ["repoPath"]
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "Whether tests passed"
+          },
+          "exitCode": {
+            "type": "number",
+            "description": "Exit code from test command (0 = success)"
+          },
+          "stdout": {
+            "type": "string",
+            "description": "Standard output from test execution"
+          },
+          "stderr": {
+            "type": "string",
+            "description": "Standard error output from test execution"
+          }
+        },
+        "required": ["success", "exitCode", "stdout", "stderr"]
+      }
+    },
+    {
+      "name": "create-pr",
+      "description": "Create a pull request by creating a branch, committing changes, and pushing",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "branchName": {
+            "type": "string",
+            "description": "Name of the branch to create"
+          },
+          "baseBranch": {
+            "type": "string",
+            "description": "Base branch to create PR against (default: main)",
+            "default": "main"
+          },
+          "commitMsg": {
+            "type": "string",
+            "description": "Commit message for the changes"
+          }
+        },
+        "required": ["branchName", "commitMsg"]
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "prUrl": {
+            "type": "string",
+            "description": "URL of the created pull request (or simulation URL)"
+          },
+          "branchName": {
+            "type": "string",
+            "description": "Name of the created branch"
+          },
+          "success": {
+            "type": "boolean",
+            "description": "Whether PR creation was successful"
+          },
+          "message": {
+            "type": "string",
+            "description": "Status message"
+          }
+        },
+        "required": ["prUrl", "branchName", "success", "message"]
+      }
+    }
+  ]
+}
+

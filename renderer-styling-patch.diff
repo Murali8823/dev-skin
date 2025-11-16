@@ -1,0 +1,465 @@
+--- a/renderer/src/components/AssistantPanel.jsx
++++ b/renderer/src/components/AssistantPanel.jsx
+@@ -1,5 +1,6 @@
+ import React, { useState, useRef, useEffect } from 'react';
+ import './AssistantPanel.css';
++import { highlightCode, CodeBlock, DiffBlock, ConfirmModal } from './components';
+ 
+ function AssistantPanel({ fileContents }) {
+   const [messages, setMessages] = useState([
+@@ -13,6 +14,7 @@
+   const [isLoading, setIsLoading] = useState(false);
+   const [currentPatch, setCurrentPatch] = useState(null);
+   const [candidatePatches, setCandidatePatches] = useState([]);
++  const [showConfirmModal, setShowConfirmModal] = useState(false);
+   const messagesEndRef = useRef(null);
+ 
+   const scrollToBottom = () => {
+@@ -27,6 +29,50 @@
+     setMessages(prev => [...prev, message]);
+   };
+ 
++  // Parse message content for code blocks and diffs
++  const parseMessageContent = (content) => {
++    const codeBlockRegex = /```(\w+)?\n([\s\S]*?)```/g;
++    const parts = [];
++    let lastIndex = 0;
++    let match;
++
++    while ((match = codeBlockRegex.exec(content)) !== null) {
++      if (match.index > lastIndex) {
++        parts.push({ type: 'text', content: content.substring(lastIndex, match.index) });
++      }
++      parts.push({ type: 'code', language: match[1] || 'javascript', content: match[2] });
++      lastIndex = match.index + match[0].length;
++    }
++
++    if (lastIndex < content.length) {
++      parts.push({ type: 'text', content: content.substring(lastIndex) });
++    }
++
++    return parts.length > 0 ? parts : [{ type: 'text', content }];
++  };
++
+   const handleApplyPatch = async () => {
+     if (!currentPatch) {
+       addMessage('assistant', 'No patch to apply. Generate a patch first.');
+       return;
+     }
+-    setIsLoading(true);
+-    addMessage('assistant', 'Applying patch...');
++    setShowConfirmModal(true);
++  };
++
++  const handleApplyPatchDryRun = async () => {
++    if (!currentPatch) return;
++    setIsLoading(true);
++    addMessage('assistant', '🔍 Running dry-run patch application...');
++    // ... dry run logic
++    setIsLoading(false);
++    setShowConfirmModal(false);
++  };
++
++  const handleApplyPatchConfirm = async () => {
++    if (!currentPatch) return;
++    setIsLoading(true);
++    addMessage('assistant', '✅ Applying patch and committing changes...');
++    // ... apply and commit logic
++    setIsLoading(false);
++    setShowConfirmModal(false);
++  };
++
++  const handleCopyPatch = () => {
++    if (!currentPatch) return;
++    navigator.clipboard.writeText(JSON.stringify(currentPatch, null, 2));
++    addMessage('assistant', '📋 Patch copied to clipboard!');
++  };
+ 
+     return (
+       <div className="assistant-panel">
+@@ -35,15 +81,25 @@
+         </div>
+ 
+         <div className="chat-container">
+-          {messages.map((message) => (
+-            <div key={message.id} className={`message ${message.role}`}>
+-              <div className="message-content">
+-                {message.content.split('\n').map((line, i) => (
+-                  <React.Fragment key={i}>
+-                    {line}
+-                    {i < message.content.split('\n').length - 1 && <br />}
+-                  </React.Fragment>
+-                ))}
++          {messages.map((message) => {
++            const contentParts = parseMessageContent(message.content);
++            return (
++              <div key={message.id} className={`message-card ${message.role}`}>
++                <div className="message-card-header">
++                  <span className="message-role-badge">{message.role === 'user' ? '👤 You' : '🤖 Assistant'}</span>
++                  <span className="message-timestamp">{message.timestamp.toLocaleTimeString()}</span>
++                </div>
++                <div className="message-card-body">
++                  {contentParts.map((part, idx) => {
++                    if (part.type === 'code') {
++                      return <CodeBlock key={idx} code={part.content} language={part.language} />;
++                    } else if (part.type === 'diff') {
++                      return <DiffBlock key={idx} diff={part.content} />;
++                    } else {
++                      return <div key={idx} className="message-text">{part.content}</div>;
++                    }
++                  })}
++                </div>
+               </div>
+-              <div className="message-timestamp">
+-                {message.timestamp.toLocaleTimeString()}
+-              </div>
+-            </div>
+-          ))}
++            );
++          })}
+         </div>
+ 
+         {currentPatch && (
+-          <div className="patch-preview">
++          <div className="patch-preview-card">
+             <div className="patch-preview-header">
+-              <strong>📝 Patch Preview</strong>
+-              <button className="patch-close" onClick={() => setCurrentPatch(null)}>×</button>
++              <div className="patch-preview-title">
++                <strong>📝 Patch Preview</strong>
++              </div>
++              <div className="patch-preview-actions">
++                <button className="patch-action-btn" onClick={handleCopyPatch}>📋 Copy</button>
++                <button className="patch-close" onClick={() => setCurrentPatch(null)}>×</button>
++              </div>
+             </div>
+-            <pre className="patch-content">
+-              {JSON.stringify(currentPatch, null, 2)}
+-            </pre>
++            <div className="patch-preview-body">
++              <CodeBlock code={JSON.stringify(currentPatch, null, 2)} language="json" />
++            </div>
++            <div className="patch-preview-footer">
++              <button onClick={handleApplyPatch} className="apply-btn primary">
++                ✅ Apply Patch
++              </button>
++            </div>
+           </div>
+         )}
++
++        <ConfirmModal
++          isOpen={showConfirmModal}
++          onClose={() => setShowConfirmModal(false)}
++          onConfirm={handleApplyPatchConfirm}
++          onDryRun={handleApplyPatchDryRun}
++          patch={currentPatch}
++        />
+       </div>
+     );
+   }
+
+--- a/renderer/src/components/AssistantPanel.css
++++ b/renderer/src/components/AssistantPanel.css
+@@ -1,240 +1,350 @@
+ .assistant-panel {
+   flex: 1;
+   display: flex;
+   flex-direction: column;
+-  background: #1a1f3a;
++  background: #0a0e27;
+   color: #e0e7ff;
+   height: 100vh;
+   overflow: hidden;
+ }
+ 
+ .panel-header {
+-  padding: 16px 20px;
+-  border-bottom: 1px solid #2d3748;
+-  background: #0f172a;
++  padding: 20px 24px;
++  border-bottom: 2px solid #1e3a8a;
++  background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
++  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+ }
+ 
+ .panel-header h2 {
+-  font-size: 18px;
+-  font-weight: 600;
++  font-size: 20px;
++  font-weight: 700;
+   color: #60a5fa;
+   margin: 0;
++  text-shadow: 0 0 10px rgba(96, 165, 250, 0.5);
+ }
+ 
+ .chat-container {
+   flex: 1;
+   overflow-y: auto;
+-  padding: 16px;
++  padding: 20px;
+   display: flex;
+   flex-direction: column;
+-  gap: 12px;
++  gap: 16px;
++  background: #0a0e27;
+ }
+ 
+-/* Message Styles */
+-.message {
++/* Message Card Styles */
++.message-card {
+   display: flex;
+   flex-direction: column;
++  max-width: 85%;
++  animation: slideIn 0.3s ease-out;
++  border-radius: 12px;
++  overflow: hidden;
++  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
++  border: 1px solid rgba(59, 130, 246, 0.2);
++}
++
++@keyframes slideIn {
++  from {
++    opacity: 0;
++    transform: translateY(10px) scale(0.95);
++  }
++  to {
++    opacity: 1;
++    transform: translateY(0) scale(1);
++  }
++}
++
++.message-card.user {
++  align-self: flex-end;
++  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
++  border-color: #60a5fa;
++}
++
++.message-card.assistant {
++  align-self: flex-start;
++  background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
++  border-color: #334155;
++}
++
++.message-card-header {
++  display: flex;
++  justify-content: space-between;
++  align-items: center;
++  padding: 10px 16px;
++  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
++  background: rgba(0, 0, 0, 0.2);
++}
++
++.message-role-badge {
++  font-size: 11px;
++  font-weight: 600;
++  text-transform: uppercase;
++  letter-spacing: 0.5px;
++  opacity: 0.9;
++}
++
++.message-timestamp {
++  font-size: 10px;
++  opacity: 0.7;
++}
++
++.message-card-body {
++  padding: 16px;
++  line-height: 1.6;
++}
++
++.message-text {
++  white-space: pre-wrap;
++  word-wrap: break-word;
++  font-size: 14px;
++}
++
++/* Code Block Styles */
++.code-block-container,
++.diff-block-container {
++  margin: 12px 0;
++  border-radius: 8px;
++  overflow: hidden;
++  border: 1px solid #334155;
++  background: #0a0e27;
++}
++
++.code-block-header {
++  display: flex;
++  justify-content: space-between;
++  align-items: center;
++  padding: 8px 12px;
++  background: #1e293b;
++  border-bottom: 1px solid #334155;
++}
++
++.code-language {
++  font-size: 11px;
++  font-weight: 600;
++  color: #60a5fa;
++  text-transform: uppercase;
++  letter-spacing: 0.5px;
++}
++
++.copy-button {
++  background: transparent;
++  border: 1px solid #3b82f6;
++  color: #60a5fa;
++  padding: 4px 10px;
++  border-radius: 6px;
++  font-size: 11px;
++  cursor: pointer;
++  transition: all 0.2s;
++  font-weight: 500;
++}
++
++.copy-button:hover {
++  background: #3b82f6;
++  color: white;
++  transform: translateY(-1px);
++}
++
++.code-block,
++.diff-block {
++  margin: 0;
++  padding: 16px;
++  font-size: 12px;
++  font-family: 'Courier New', 'Monaco', 'Consolas', monospace;
++  line-height: 1.6;
++  overflow-x: auto;
++  background: #0a0e27;
++  color: #e0e7ff;
++}
++
++.code-keyword {
++  color: #c792ea;
++  font-weight: 600;
++}
++
++.code-string {
++  color: #c3e88d;
++}
++
++.code-comment {
++  color: #546e7a;
++  font-style: italic;
++}
++
++/* Diff Block Styles */
++.diff-line {
++  padding: 2px 0;
++  font-family: 'Courier New', monospace;
++}
++
++.diff-add {
++  background: rgba(16, 185, 129, 0.15);
++  color: #10b981;
++}
++
++.diff-remove {
++  background: rgba(239, 68, 68, 0.15);
++  color: #ef4444;
++}
++
++.diff-header {
++  background: rgba(59, 130, 124, 0.2);
++  color: #60a5fa;
++  font-weight: 600;
++  padding: 4px 0;
++}
++
++/* Patch Preview Card */
++.patch-preview-card {
++  border-top: 2px solid #1e3a8a;
++  border-bottom: 2px solid #1e3a8a;
++  background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
++  display: flex;
++  flex-direction: column;
++  max-height: 300px;
++  box-shadow: 0 -4px 12px rgba(0, 0, 1, 0.3);
++}
++
++.patch-preview-header {
++  padding: 12px 16px;
++  display: flex;
++  justify-content: space-between;
++  align-items: center;
++  background: #1e293b;
++  border-bottom: 1px solid #334155;
++}
++
++.patch-preview-actions {
++  display: flex;
++  gap: 8px;
++  align-items: center;
++}
++
++.patch-action-btn {
++  background: transparent;
++  border: 1px solid #3b82f6;
++  color: #60a5fa;
++  padding: 6px 12px;
++  border-radius: 6px;
++  font-size: 11px;
++  cursor: pointer;
++  transition: all 0.2s;
++}
++
++.patch-preview-footer {
++  padding: 12px 16px;
++  border-top: 1px solid #334155;
++  background: #1e293b;
++  display: flex;
++  justify-content: flex-end;
++}
++
++.apply-btn.primary {
++  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
++  color: white;
++  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
++}
++
++/* Modal Styles */
++.modal-overlay {
++  position: fixed;
++  top: 0;
++  left: 0;
++  right: 0;
++  bottom: 0;
++  background: rgba(0, 0, 0, 0.7);
++  display: flex;
++  align-items: center;
++  justify-content: center;
++  z-index: 1000;
++  backdrop-filter: blur(4px);
++}
++
++.modal-content {
++  background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
++  border: 2px solid #3b82f6;
++  border-radius: 16px;
++  width: 90%;
++  max-width: 500px;
++  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
++}
++
++.modal-footer {
++  padding: 20px 24px;
++  border-top: 1px solid #334155;
++  display: flex;
++  gap: 12px;
++  justify-content: flex-end;
++}
++
++.modal-btn.warning {
++  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
++  border-color: #f59e0b;
++  color: white;
++}
++
++.modal-btn.primary {
++  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
++  border-color: #10b981;
++  color: white;
++}
+

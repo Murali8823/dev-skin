@@ -1,0 +1,68 @@
+{
+  "name": "dev-skin",
+  "version": "1.0.0",
+  "description": "Dev Skin desktop app monorepo",
+  "private": true,
+  "workspaces": [
+    "electron",
+    "renderer",
+    "adapter",
+    "mcp-server"
+  ],
+  "scripts": {
+    "bootstrap": "npm install",
+    "start:dev": "concurrently \"npm run dev --workspace=renderer\" \"npm run start --workspace=adapter\" \"npm run start --workspace=mcp-server\" \"wait-on http://localhost:5173 http://localhost:8000 http://localhost:8001 && npm run start --workspace=electron\"",
+    "build": "npm run build --workspace=renderer",
+    "package": "electron-builder",
+    "package:win": "electron-builder --win",
+    "package:mac": "electron-builder --mac",
+    "package:linux": "electron-builder --linux",
+    "test": "mocha test/**/*.spec.js --timeout 30000"
+  },
+  "build": {
+    "appId": "com.devskin.app",
+    "productName": "Dev Skin",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "electron/**/*",
+      "renderer/dist/**/*",
+      "adapter/**/*",
+      "mcp-server/**/*",
+      "package.json",
+      "!**/node_modules/**",
+      "!**/__tests__/**",
+      "!**/*.test.js",
+      "!**/*.spec.js"
+    ],
+    "win": {
+      "target": ["nsis"],
+      "icon": "build/icon.ico"
+    },
+    "mac": {
+      "target": ["dmg"],
+      "icon": "build/icon.icns",
+      "category": "public.app-category.developer-tools"
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "icon": "build/icon.png",
+      "category": "Development"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "electron-builder": "^24.9.1",
+    "wait-on": "^7.2.0",
+    "mocha": "^10.2.0",
+    "chai": "^4.3.10"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

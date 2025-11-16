@@ -1,0 +1,7 @@
+{
+  "extension": ["js"],
+  "spec": "test/**/*.spec.js",
+  "timeout": 30000,
+  "node-option": ["experimental-loader=./test-loader.mjs"]
+}
+
